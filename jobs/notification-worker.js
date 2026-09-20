@@ -40,6 +40,10 @@ let sentThisHour = 0;
 let hourMark = new Date().getHours();
 let running = false;
 let heartbeatTimer = null;
+let qrWatchTimer = null;
+// Stempel waktu permintaan QR terakhir yang sudah dilayani, supaya satu
+// permintaan tidak memicu reconnect berulang tiap kali timer berdetak.
+let lastQrRefreshHandled = 0;
 
 /* ------------------------------------------------------------------ */
 /* Status ke database                                                  */
@@ -264,6 +268,27 @@ async function start() {
   }, HEARTBEAT_MS);
   heartbeatTimer.unref?.();
 
+  // Pantau permintaan "buat ulang QR" dari panel.
+  //
+  // Intervalnya 5 detik, bukan mengikuti heartbeat yang 60 detik: di ujung
+  // sana ada admin yang sedang berdiri sambil memegang HP, dan menunggu
+  // semenit setelah menekan tombol akan terasa seperti tombolnya rusak.
+  qrWatchTimer = setInterval(async () => {
+    try {
+      const s = await WaStatus.findById('wa').select('qr_refresh_at').lean();
+      const at = s?.qr_refresh_at ? new Date(s.qr_refresh_at).getTime() : 0;
+      if (!at || at <= lastQrRefreshHandled) return;
+
+      lastQrRefreshHandled = at;
+      console.log('[wa-worker] permintaan QR baru dari panel');
+      await wa.forceReconnect().catch((e) =>
+        console.error('[wa-worker] gagal buat ulang QR:', e.message));
+    } catch (err) {
+      console.error('[wa-worker] pantau QR gagal:', err.message);
+    }
+  }, 5_000);
+  qrWatchTimer.unref?.();
+
   console.log('[wa-worker] menghubungkan ke WhatsApp...');
   try {
     await wa.connect();
@@ -300,6 +325,7 @@ async function start() {
 function stop() {
   running = false;
   if (heartbeatTimer) clearInterval(heartbeatTimer);
+  if (qrWatchTimer) clearInterval(qrWatchTimer);
 }
 
 module.exports = { start, stop, processBatch, patchStatus, PRIORITY_TEMPLATES };

@@ -985,6 +985,30 @@ module.exports = {
       },
     },
 
+    '/api/admin/system/whatsapp/refresh-qr': {
+      post: {
+        tags: ['Admin — Sistem'],
+        summary: 'Minta QR pairing baru',
+        description: [
+          'Butuh peran **owner** atau **admin**.',
+          '',
+          'Membuang koneksi WhatsApp yang menggantung dan menerbitkan QR baru.',
+          'Permintaan dititipkan lewat database karena worker berjalan di',
+          'proses terpisah; worker memantaunya tiap 5 detik.',
+          '',
+          'Ditolak dengan 409 kalau WhatsApp sedang tersambung — memutus',
+          'koneksi yang sehat berarti menghentikan seluruh notifikasi dan OTP',
+          'demi QR yang tidak dibutuhkan siapa pun.',
+        ].join('\n'),
+        security: [{ adminAuth: [] }],
+        responses: {
+          200: ok('Permintaan diterima, QR baru muncul beberapa detik lagi'),
+          403: err('Peran tidak mencukupi'),
+          409: err('WhatsApp sedang tersambung'),
+        },
+      },
+    },
+
     '/api/admin/system/whatsapp/reset-banned': {
       post: {
         tags: ['Admin — Sistem'],

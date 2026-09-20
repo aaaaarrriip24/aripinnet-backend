@@ -74,7 +74,19 @@ function classify(code) {
   if (code === R.badSession || code === 500) return { kind: 'bad_session', retry: false };
   if (code === R.multideviceMismatch || code === 411) return { kind: 'mismatch', retry: false };
 
-  // Sisanya: putus biasa, restart required, timeout. Coba lagi.
+  // 515 restartRequired — INI BUKAN ERROR. WhatsApp mengirimnya tepat
+  // setelah QR berhasil dipindai: session sudah terbentuk, tapi koneksi
+  // harus dibuka ulang untuk memakainya.
+  //
+  // Dibedakan dari transient biasa karena harus disambung ulang SEGERA.
+  // Kalau kena backoff (yang bisa tumbuh sampai 5 menit), proses pairing
+  // keburu kedaluwarsa dan HP menampilkan "periksa koneksi internet
+  // telepon lalu pindai QR lagi" — padahal pemindaiannya sudah benar.
+  if (code === R.restartRequired || code === 515) {
+    return { kind: 'restart_required', retry: true, immediate: true };
+  }
+
+  // Sisanya: putus biasa, timeout. Coba lagi dengan backoff.
   return { kind: 'transient', retry: true };
 }
 
@@ -143,6 +155,10 @@ function handleConnectionUpdate(update) {
   if (qr) {
     require('qrcode-terminal').generate(qr, { small: true });
     console.log('[wa] scan QR di atas, atau lewat panel → Sistem');
+    // QR baru = WhatsApp menunggu pairing, bukan sedang gagal menyambung.
+    // Riwayat kegagalan sebelumnya tidak relevan lagi; kalau dibiarkan,
+    // backoff yang sudah membengkak akan menunda penyelesaian pairing.
+    reconnectAttempts = 0;
     // String QR ikut dikirim supaya worker bisa menyimpannya dan panel
     // menampilkannya — tidak semua admin punya akses ke terminal server.
     emit('qr', { qr });
@@ -161,7 +177,7 @@ function handleConnectionUpdate(update) {
 
   isReady = false;
   const code = lastDisconnect?.error?.output?.statusCode;
-  const { kind, retry } = classify(code);
+  const { kind, retry, immediate } = classify(code);
 
   console.warn(`[wa] terputus, code: ${code}, jenis: ${kind}`);
   emit('disconnected', { code, kind, message: NEEDS_HUMAN[kind] || 'putus sementara' });
@@ -180,10 +196,18 @@ function handleConnectionUpdate(update) {
     return;
   }
 
-  // Backoff: 10s, 20s, 40s, 80s, maksimal 5 menit.
-  reconnectAttempts++;
-  const delay = Math.min(10_000 * 2 ** (reconnectAttempts - 1), 300_000);
-  console.log(`[wa] reconnect dalam ${Math.round(delay / 1000)}s (percobaan ${reconnectAttempts})`);
+  // Restart required = lanjutan pairing yang berhasil, bukan kegagalan.
+  // Jangan dihitung sebagai percobaan dan jangan ditunda.
+  let delay;
+  if (immediate) {
+    delay = 1_000;
+    console.log('[wa] restart required — menyambung ulang segera untuk menuntaskan pairing');
+  } else {
+    // Backoff: 10s, 20s, 40s, 80s, maksimal 5 menit.
+    reconnectAttempts++;
+    delay = Math.min(10_000 * 2 ** (reconnectAttempts - 1), 300_000);
+    console.log(`[wa] reconnect dalam ${Math.round(delay / 1000)}s (percobaan ${reconnectAttempts})`);
+  }
 
   setTimeout(() => {
     connect().catch((e) => console.error('[wa] reconnect gagal:', e.message));
@@ -246,6 +270,30 @@ async function disconnect() {
 }
 
 /**
+ * Putuskan koneksi dan sambung lagi supaya WhatsApp menerbitkan QR baru.
+ *
+ * Sengaja TIDAK memakai disconnect() — fungsi itu memanggil sock.logout()
+ * yang mencabut session di sisi WhatsApp. Di sini kita cuma ingin membuang
+ * koneksi yang menggantung, bukan membatalkan pairing yang mungkin sedang
+ * berjalan.
+ *
+ * Backoff direset karena ini permintaan manusia yang sedang menunggu di
+ * depan layar, bukan percobaan otomatis.
+ */
+async function forceReconnect() {
+  reconnectAttempts = 0;
+
+  if (sock) {
+    try { sock.end(undefined); } catch (_) { /* abaikan */ }
+  }
+  sock = null;
+  connecting = null;
+  isReady = false;
+
+  return connect();
+}
+
+/**
  * Reset flag banned setelah admin mengganti nomor dan menghapus session.
  * Dipanggil dari endpoint panel, bukan otomatis — kalau otomatis, sistem
  * akan terus menghantam nomor yang sudah diblokir.
@@ -256,6 +304,6 @@ function resetBanned() {
 }
 
 module.exports = {
-  connect, sendText, toJid, status, disconnect, sleep,
+  connect, sendText, toJid, status, disconnect, sleep, forceReconnect,
   onStatus, resetBanned, classify,
 };

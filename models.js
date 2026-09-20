@@ -293,6 +293,10 @@ const waStatusSchema = new Schema({
   // yang sudah login, dan dianggap kedaluwarsa setelah 60 detik.
   qr:                   { type: String },
   qr_at:                { type: Date },
+
+  // Ditulis API saat admin menekan "Buat ulang QR" di panel, dibaca
+  // worker. Sekali lagi: dua proses berbeda, database jadi jembatannya.
+  qr_refresh_at:        { type: Date },
 }, { versionKey: false, timestamps: true });
 
 /* ------------------------------------------------------------------ */

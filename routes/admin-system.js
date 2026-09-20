@@ -15,7 +15,11 @@ const { requireRole } = require('../middleware/auth');
 
 // QR WhatsApp berganti tiap ~20 detik. Diberi kelonggaran sedikit supaya
 // tidak hilang-timbul di layar saat panel melakukan polling.
-const QR_MAX_AGE_SEC = 60;
+// QR WhatsApp berumur pendek. Menampilkan yang sudah lewat masa berlaku
+// membuat HP menolak dengan "periksa koneksi internet telepon lalu pindai
+// QR lagi" — pesan yang menyesatkan, karena yang salah bukan koneksinya.
+// Lebih baik kosong sesaat daripada menampilkan kode yang sudah mati.
+const QR_MAX_AGE_SEC = 25;
 
 /* ------------------------------------------------------------------ */
 /* Status WhatsApp                                                     */
@@ -94,6 +98,39 @@ router.get('/whatsapp', async (req, res) => {
  * Tidak otomatis: selama flag banned menyala, worker berhenti mencoba —
  * itu justru yang mencegah nomor pengganti ikut kena blokir.
  */
+/**
+ * POST /api/admin/system/whatsapp/refresh-qr
+ *
+ * Minta worker membuang koneksi yang menggantung dan menerbitkan QR baru.
+ *
+ * Ditolak kalau WhatsApp sedang tersambung: memutus koneksi yang sehat
+ * berarti menghentikan seluruh notifikasi dan OTP demi QR yang tidak
+ * dibutuhkan siapa pun. Untuk ganti nomor, jalurnya "Reset status".
+ */
+router.post('/whatsapp/refresh-qr', requireRole('owner', 'admin'), async (req, res) => {
+  try {
+    const status = await WaStatus.findById('wa').select('connected').lean();
+
+    if (status?.connected) {
+      return res.status(409).json({
+        message: 'WhatsApp sedang tersambung. Putuskan dulu lewat Reset status kalau ingin ganti nomor.',
+      });
+    }
+
+    // Worker (proses lain) memantau field ini tiap 5 detik.
+    await WaStatus.findByIdAndUpdate(
+      'wa',
+      { $set: { qr_refresh_at: new Date(), qr: null, qr_at: null } },
+      { upsert: true }
+    );
+
+    return res.json({ message: 'QR baru sedang dibuat, tunggu beberapa detik.' });
+  } catch (err) {
+    console.error('[system/refresh-qr]', err.message);
+    return res.status(500).json({ message: 'Gagal meminta QR baru' });
+  }
+});
+
 router.post('/whatsapp/reset-banned', requireRole('owner', 'admin'), async (req, res) => {
   try {
     await WaStatus.findByIdAndUpdate(
