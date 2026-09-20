@@ -29,6 +29,27 @@ let reconnectAttempts = 0;
 let statusListener = null;
 
 /**
+ * Penanda socket yang sedang berlaku.
+ *
+ * Tiap socket Baileys punya listener sendiri yang tetap hidup setelah
+ * socket-nya dibuang. Tanpa penanda ini, socket lama masih ikut mengubah
+ * state bersama dan — lebih parah — masih memegang koneksi ke WhatsApp.
+ * WhatsApp melihat dua koneksi pada satu session lalu menutup keduanya
+ * dengan code 440 "connection replaced", yang pesannya menyesatkan:
+ * seolah ada worker kedua, padahal biang keroknya satu proses ini.
+ */
+let socketSeq = 0;
+let activeSocketId = 0;
+
+/** Buang socket beserta listener-nya supaya tidak jadi socket hantu. */
+function discard(s) {
+  if (!s) return;
+  try { s.ev.removeAllListeners('connection.update'); } catch (_) { /* abaikan */ }
+  try { s.ev.removeAllListeners('creds.update'); } catch (_) { /* abaikan */ }
+  try { s.end(undefined); } catch (_) { /* abaikan */ }
+}
+
+/**
  * Daftarkan callback status. Dipanggil worker untuk menyimpan kondisi
  * ke database supaya watchdog di proses lain bisa membacanya.
  */
@@ -116,7 +137,12 @@ async function connect() {
     const { state, saveCreds } = await useMultiFileAuthState(SESSION_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
-    sock = makeWASocket({
+    // Socket lama dibuang lebih dulu — jangan sampai dua socket hidup
+    // bersamaan pada satu session.
+    discard(sock);
+
+    const id = ++socketSeq;
+    const s = makeWASocket({
       version,
       auth: state,
       logger: pino({ level: 'silent' }),
@@ -126,8 +152,14 @@ async function connect() {
       syncFullHistory: false,
     });
 
-    sock.ev.on('creds.update', saveCreds);
-    sock.ev.on('connection.update', handleConnectionUpdate);
+    sock = s;
+    activeSocketId = id;
+
+    s.ev.on('creds.update', saveCreds);
+    // Socket-nya ikut dititipkan, jangan baca variabel modul `sock` di
+    // dalam handler: saat event datang, `sock` bisa sudah menunjuk socket
+    // lain atau sudah null.
+    s.ev.on('connection.update', (u) => handleConnectionUpdate(u, s, id));
 
     const deadline = Date.now() + 60_000;
     while (!isReady && Date.now() < deadline) {
@@ -149,7 +181,14 @@ async function connect() {
   }
 }
 
-function handleConnectionUpdate(update) {
+function handleConnectionUpdate(update, s, id) {
+  // Kabar dari socket yang sudah tidak berlaku: abaikan, dan pastikan
+  // socket itu benar-benar mati supaya tidak menabrak yang baru.
+  if (id !== activeSocketId) {
+    discard(s);
+    return;
+  }
+
   const { connection, lastDisconnect, qr } = update;
 
   if (qr) {
@@ -168,8 +207,8 @@ function handleConnectionUpdate(update) {
     isReady = true;
     banned = false;
     reconnectAttempts = 0;
-    console.log('[wa] terhubung sebagai', sock.user?.id);
-    emit('connected', { jid: sock.user?.id });
+    console.log('[wa] terhubung sebagai', s.user?.id);
+    emit('connected', { jid: s.user?.id });
     return;
   }
 
@@ -181,6 +220,11 @@ function handleConnectionUpdate(update) {
 
   console.warn(`[wa] terputus, code: ${code}, jenis: ${kind}`);
   emit('disconnected', { code, kind, message: NEEDS_HUMAN[kind] || 'putus sementara' });
+
+  // Socket ini sudah selesai. Penanda dinaikkan supaya sisa event-nya
+  // tidak lagi mengubah state saat socket pengganti sudah berjalan.
+  activeSocketId++;
+  discard(s);
 
   sock = null;
   connecting = null;
@@ -283,9 +327,11 @@ async function disconnect() {
 async function forceReconnect() {
   reconnectAttempts = 0;
 
-  if (sock) {
-    try { sock.end(undefined); } catch (_) { /* abaikan */ }
-  }
+  // Naikkan penanda dulu supaya event susulan dari socket lama langsung
+  // diabaikan, baru socket-nya dibuang.
+  activeSocketId++;
+  discard(sock);
+
   sock = null;
   connecting = null;
   isReady = false;

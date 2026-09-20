@@ -168,13 +168,32 @@ router.post('/whatsapp/retry-failed', requireRole('owner', 'admin'), async (req,
         // Nomor yang memang tidak terdaftar di WhatsApp jangan diulang —
         // hasilnya akan gagal lagi dan hanya membuang jatah kirim.
         last_error: { $not: /tidak terdaftar|tidak punya nomor/i },
+        // OTP tidak pernah layak diulang. Masa berlakunya 5 menit, jadi
+        // kode yang dikirim ulang berjam-jam kemudian pasti ditolak saat
+        // dicoba — pelanggan menyalahkan aplikasinya, bukan waktunya.
+        // Yang benar: pelanggan meminta kode baru.
+        template: { $ne: 'otp' },
       },
       { $set: { status: 'queued', retry_count: 0, last_error: null } }
     );
 
+    // OTP kedaluwarsa dibereskan sekalian supaya tidak menumpuk di
+    // hitungan "gagal" dan membuat panel terlihat bermasalah terus.
+    const otpDibuang = await Notification.deleteMany({
+      status: 'failed',
+      template: 'otp',
+      updatedAt: { $lt: new Date(Date.now() - 10 * 60_000) },
+    });
+
+    const pesan = [`${result.modifiedCount} notifikasi dikembalikan ke antrian`];
+    if (otpDibuang.deletedCount) {
+      pesan.push(`${otpDibuang.deletedCount} OTP kedaluwarsa dibuang`);
+    }
+
     return res.json({
-      message: `${result.modifiedCount} notifikasi dikembalikan ke antrian`,
+      message: pesan.join(', '),
       count: result.modifiedCount,
+      otp_dibuang: otpDibuang.deletedCount,
     });
   } catch (err) {
     return res.status(500).json({ message: err.message });

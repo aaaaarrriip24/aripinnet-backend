@@ -258,6 +258,14 @@ async function start() {
   // yang mungkin sudah usang.
   await settings.refresh({ force: true });
 
+  // Anggap permintaan QR yang sudah ada sebagai sudah dilayani. Tanpa ini,
+  // permintaan lama dari kapan pun akan terputar ulang setiap worker
+  // restart dan memutus koneksi yang baru saja terbentuk.
+  try {
+    const s = await WaStatus.findById('wa').select('qr_refresh_at').lean();
+    if (s?.qr_refresh_at) lastQrRefreshHandled = new Date(s.qr_refresh_at).getTime();
+  } catch (_) { /* biarkan 0 — paling banter satu reconnect tambahan */ }
+
   wa.onStatus(handleWaEvent);
 
   // Heartbeat terpisah dari loop kerja: kalau pengiriman menggantung,
