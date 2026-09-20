@@ -62,11 +62,20 @@ async function patchStatus(fields) {
  * Alert-nya sendiri dikirim watchdog, bukan di sini — supaya logika
  * "kapan harus berteriak" tinggal di satu tempat.
  */
-function handleWaEvent({ event, jid, code, kind, message }) {
+function handleWaEvent({ event, jid, code, kind, message, qr }) {
+  if (event === 'qr') {
+    // Disimpan supaya bisa dipindai dari panel. Dibuang lagi begitu
+    // tersambung — QR yang sudah terpakai tidak berguna dan tidak perlu
+    // tersimpan lebih lama dari yang diperlukan.
+    patchStatus({ qr, qr_at: new Date(), connected: false });
+    return;
+  }
+
   if (event === 'connected') {
     patchStatus({
       connected: true, banned: false, jid,
       last_connected_at: new Date(), consecutive_failures: 0, last_error: null,
+      qr: null, qr_at: null,
     });
     return;
   }

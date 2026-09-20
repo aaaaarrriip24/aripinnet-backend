@@ -283,6 +283,16 @@ const waStatusSchema = new Schema({
 
   consecutive_failures: { type: Number, default: 0 },
   last_error:           { type: String },
+
+  // QR pairing terakhir, dititipkan worker supaya panel bisa
+  // menampilkannya. Worker jalan di proses terpisah dari API, jadi
+  // database satu-satunya jalur di antara keduanya.
+  //
+  // Isinya kredensial sekali pakai: siapa pun yang memindainya menautkan
+  // HP-nya ke nomor WhatsApp sistem. Karena itu hanya dikirim ke admin
+  // yang sudah login, dan dianggap kedaluwarsa setelah 60 detik.
+  qr:                   { type: String },
+  qr_at:                { type: Date },
 }, { versionKey: false, timestamps: true });
 
 /* ------------------------------------------------------------------ */

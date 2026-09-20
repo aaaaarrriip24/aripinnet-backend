@@ -5,12 +5,17 @@
  */
 
 const express = require('express');
+const QRCode = require('qrcode');
 const router = express.Router();
 
 const { WaStatus, AlertLog, Notification, Router: RouterModel } = require('../models');
 const alert = require('../services/alert');
 const watchdog = require('../jobs/wa-watchdog');
 const { requireRole } = require('../middleware/auth');
+
+// QR WhatsApp berganti tiap ~20 detik. Diberi kelonggaran sedikit supaya
+// tidak hilang-timbul di layar saat panel melakukan polling.
+const QR_MAX_AGE_SEC = 60;
 
 /* ------------------------------------------------------------------ */
 /* Status WhatsApp                                                     */
@@ -52,11 +57,27 @@ router.get('/whatsapp', async (req, res) => {
       reason = `${failedLastHour} pengiriman gagal dalam sejam terakhir`;
     }
 
+    // QR pairing — hanya kalau masih segar. QR WhatsApp berganti tiap
+    // ~20 detik; menampilkan yang basi membuat admin memindai berulang
+    // kali tanpa hasil dan menyangka sistemnya rusak.
+    let qr = null;
+    const qrAgeSec = status?.qr_at
+      ? Math.round((now - new Date(status.qr_at).getTime()) / 1000)
+      : null;
+
+    if (status?.qr && qrAgeSec !== null && qrAgeSec < QR_MAX_AGE_SEC && !status.connected) {
+      qr = {
+        png: await QRCode.toDataURL(status.qr, { margin: 1, width: 320 }),
+        age_sec: qrAgeSec,
+      };
+    }
+
     return res.json({
       health,
       reason,
-      status: status || null,
+      status: status ? { ...status, qr: undefined } : null,
       heartbeat_age_min: heartbeatAge,
+      qr,
       antrian: { queued, failed_1h: failedLastHour, sent_1h: sentLastHour },
       alert_channels: alert.configured(),
     });

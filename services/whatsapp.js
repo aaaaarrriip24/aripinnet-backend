@@ -142,8 +142,10 @@ function handleConnectionUpdate(update) {
 
   if (qr) {
     require('qrcode-terminal').generate(qr, { small: true });
-    console.log('[wa] scan QR di atas dengan WhatsApp nomor billing');
-    emit('qr');
+    console.log('[wa] scan QR di atas, atau lewat panel → Sistem');
+    // String QR ikut dikirim supaya worker bisa menyimpannya dan panel
+    // menampilkannya — tidak semua admin punya akses ke terminal server.
+    emit('qr', { qr });
   }
 
   if (connection === 'open') {
