@@ -7,12 +7,17 @@
  *
  * URL webhook yang didaftarkan di dashboard Midtrans:
  *   https://<domain-kamu>/api/payment/webhook/midtrans
+ *
+ * AUTH: router ini dipasang di app.js SEBELUM requireAdmin supaya webhook
+ * Midtrans bisa masuk tanpa token. Konsekuensinya requireAdmin harus
+ * dipasang per-route di sini — hanya webhook yang boleh terbuka.
  */
 
 const express = require('express');
 const router = express.Router();
 
 const { Invoice, Payment, Customer } = require('../models');
+const { requireAdmin } = require('../middleware/auth');
 const midtrans = require('../services/midtrans');
 const settlement = require('../services/settlement');
 
@@ -41,7 +46,7 @@ router.post('/webhook/midtrans', async (req, res) => {
  * POST /api/payment/invoices/:id/charge
  * body: { method: 'qris' | 'va', bank?: 'bca' }
  */
-router.post('/invoices/:id/charge', async (req, res) => {
+router.post('/invoices/:id/charge', requireAdmin, async (req, res) => {
   try {
     const { method = 'qris', bank } = req.body;
 
@@ -121,7 +126,7 @@ router.post('/invoices/:id/charge', async (req, res) => {
  * Polling dari app Capacitor selagi pelanggan scan QRIS.
  * Sekaligus jaring pengaman kalau webhook tidak sampai.
  */
-router.get('/:orderId/status', async (req, res) => {
+router.get('/:orderId/status', requireAdmin, async (req, res) => {
   try {
     const payment = await Payment.findOne({ gateway_ref: req.params.orderId });
     if (!payment) return res.status(404).json({ message: 'Transaksi tidak ditemukan' });
@@ -149,9 +154,8 @@ router.get('/:orderId/status', async (req, res) => {
 
 /**
  * POST /api/payment/invoices/:id/cash — pembayaran tunai oleh admin.
- * Pasang middleware auth admin di depan route ini.
  */
-router.post('/invoices/:id/cash', async (req, res) => {
+router.post('/invoices/:id/cash', requireAdmin, async (req, res) => {
   try {
     const payment = await settlement.recordCashPayment(req.params.id, req.admin?._id);
     return res.status(201).json({ payment: toPaymentView(payment) });

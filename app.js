@@ -75,6 +75,21 @@ app.use('/api/admin', requireAdmin, require('./routes/admin'));
 
 app.use('/api/customer', requireCustomer, require('./routes/customer'));
 
+// Dokumentasi API. Opt-in lewat ENABLE_DOCS — server ini terbuka ke
+// internet, dan daftar lengkap endpoint tidak perlu ikut dipublikasikan.
+if (process.env.ENABLE_DOCS === 'true') {
+  const swaggerUi = require('swagger-ui-express');
+  const openapi = require('./docs/openapi');
+
+  app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(openapi, {
+    customSiteTitle: `API Billing — ${process.env.ISP_NAME || 'RT/RW Net'}`,
+    swaggerOptions: { persistAuthorization: true, docExpansion: 'none' },
+  }));
+  app.get('/api/docs.json', (req, res) => res.json(openapi));
+
+  console.log('[app] dokumentasi API aktif di /api/docs');
+}
+
 // Halaman walled garden isolir
 app.use('/isolir', express.static(path.join(__dirname, 'public/isolir')));
 

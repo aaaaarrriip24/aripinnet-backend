@@ -8,7 +8,8 @@
     "start": "node app.js",
     "worker": "node worker.js",
     "dev": "node --watch app.js",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "check-docs": "node scripts/check-docs.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.9",
@@ -23,7 +24,8 @@
     "node-cron": "^3.0.3",
     "node-routeros": "^1.6.9",
     "pino": "^9.5.0",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "swagger-ui-express": "^5.0.1"
   },
   "engines": {
     "node": ">=18"
