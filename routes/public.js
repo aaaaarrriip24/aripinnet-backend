@@ -17,6 +17,7 @@ const router = express.Router();
 
 const { Customer, Service, Invoice, Payment } = require('../models');
 const midtrans = require('../services/midtrans');
+const settings = require('../lib/settings');
 
 /* ------------------------------------------------------------------ */
 /* Rate limit sederhana per IP (tanpa dependensi)                      */
@@ -192,6 +193,33 @@ router.get('/payments/:orderId/status', rateLimit, async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ message: 'Gagal cek status' });
+  }
+});
+
+/* ------------------------------------------------------------------ */
+/* Identitas ISP — nama dan nomor CS yang sedang berlaku               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * GET /api/public/info
+ *
+ * Dipakai halaman isolir dan app pelanggan supaya nomor CS tidak perlu
+ * dipatok saat build. Nomor mengikuti WhatsApp yang sedang tertaut, jadi
+ * begitu admin memindai QR dengan nomor baru, semua tampilan ikut berubah
+ * tanpa build ulang apa pun.
+ *
+ * Tanpa auth dan tanpa data pelanggan — isinya memang untuk dipajang.
+ */
+router.get('/info', rateLimit, async (req, res) => {
+  try {
+    await settings.refresh();
+    return res.json({
+      isp_name: process.env.ISP_NAME || 'RT/RW Net',
+      cs_phone: settings.csPhone(),
+      isolir_url: process.env.ISOLIR_URL || '',
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Gagal memuat info' });
   }
 });
 

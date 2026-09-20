@@ -12,7 +12,12 @@
  * sertakan jalan keluar (nomor yang bisa dihubungi).
  */
 
-const CS_PHONE   = process.env.CS_PHONE || '';
+// Nomor CS sengaja TIDAK dibaca sekali di sini. Ia mengikuti nomor
+// WhatsApp yang sedang tertaut, dan itu bisa berubah saat sistem jalan —
+// lihat lib/settings.js. Kalau dibekukan jadi const, pesan ke pelanggan
+// akan mencantumkan nomor lama sampai proses direstart.
+const { csPhone } = require('../lib/settings');
+
 const ISP_NAME   = process.env.ISP_NAME || 'Jaringan RT/RW Net';
 const ISOLIR_URL = process.env.ISOLIR_URL || '';
 
@@ -45,7 +50,7 @@ Bayar sekarang: ${ISOLIR_URL}
 ` : ''}
 Layanan aktif kembali otomatis dalam beberapa menit setelah pembayaran masuk.
 
-Kalau sudah membayar tapi internet belum menyala, hubungi ${CS_PHONE} agar kami cek manual.`,
+Kalau sudah membayar tapi internet belum menyala, hubungi ${csPhone()} agar kami cek manual.`,
 
   lunas: (p) => `Pembayaran diterima ✅
 

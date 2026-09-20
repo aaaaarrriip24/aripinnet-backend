@@ -122,14 +122,34 @@
 (function () {
   'use strict';
 
-  // Isi saat deploy. Jangan pakai variabel build — halaman ini harus tetap
-  // jalan walau di-copy mentah ke server lain.
+  // Jangan pakai variabel build — halaman ini harus tetap jalan walau
+  // di-copy mentah ke server lain.
   var API = '/api/public';
-  var CS_PHONE = '628123456789';
+
+  // Nomor cadangan, dipakai hanya kalau /info tidak bisa dihubungi.
+  // Nomor yang sebenarnya diambil dari server, mengikuti WhatsApp yang
+  // sedang tertaut — jadi mengganti nomor bot tidak menuntut file ini
+  // diedit dan di-deploy ulang.
+  var CS_PHONE = '';
 
   var csLink = document.getElementById('cs-link');
-  csLink.href = 'https://wa.me/' + CS_PHONE;
-  csLink.textContent = '+' + CS_PHONE;
+
+  function pasangCs(nomor) {
+    if (!nomor) {
+      csLink.textContent = 'hubungi admin Anda';
+      csLink.removeAttribute('href');
+      return;
+    }
+    csLink.href = 'https://wa.me/' + nomor;
+    csLink.textContent = '+' + nomor;
+  }
+
+  pasangCs(CS_PHONE);
+
+  fetch(API + '/info')
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (info) { if (info && info.cs_phone) pasangCs(info.cs_phone); })
+    .catch(function () { /* biarkan nomor cadangan */ });
 
   var pollTimer = null;
   var state = { invoices: [], orderId: null };

@@ -18,6 +18,7 @@
 const { Notification, Customer, WaStatus } = require('../models');
 const wa = require('../services/whatsapp');
 const alert = require('../services/alert');
+const settings = require('../lib/settings');
 const { render } = require('../templates/messages');
 
 const BATCH_SIZE    = Number(process.env.WA_BATCH_SIZE || 20);
@@ -77,6 +78,9 @@ function handleWaEvent({ event, jid, code, kind, message, qr }) {
       last_connected_at: new Date(), consecutive_failures: 0, last_error: null,
       qr: null, qr_at: null,
     });
+    // Nomor yang baru saja memindai QR langsung menjadi nomor CS, tanpa
+    // menunggu TTL cache — pesan berikutnya harus sudah memakai nomor ini.
+    settings.setFromJid(jid);
     return;
   }
 
@@ -244,6 +248,11 @@ async function markPermanentFail(notif, message) {
 async function start() {
   if (running) return;
   running = true;
+
+  // Pulihkan nomor CS dari nomor yang terakhir tertaut, supaya pesan yang
+  // dikirim sebelum koneksi WhatsApp terbentuk tidak memakai nomor .env
+  // yang mungkin sudah usang.
+  await settings.refresh({ force: true });
 
   wa.onStatus(handleWaEvent);
 

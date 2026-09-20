@@ -417,6 +417,34 @@ module.exports = {
 
     /* ---------------- Publik (halaman isolir) ---------------- */
 
+    '/api/public/info': {
+      get: {
+        tags: ['Publik'],
+        summary: 'Nama ISP dan nomor CS yang sedang berlaku',
+        description: [
+          'Dipakai halaman isolir dan app pelanggan supaya nomor CS tidak',
+          'perlu dipatok saat build.',
+          '',
+          '`cs_phone` mengikuti nomor WhatsApp yang sedang tertaut ke sistem.',
+          'Begitu admin memindai QR dengan nomor baru, nilai di sini ikut',
+          'berubah tanpa build ulang atau restart. `CS_PHONE` di `.env` hanya',
+          'dipakai selama belum ada nomor yang pernah tertaut.',
+        ].join('\n'),
+        security: [],
+        responses: {
+          200: ok('Identitas ISP', {
+            type: 'object',
+            properties: {
+              isp_name: { type: 'string', example: 'Aripinnet' },
+              cs_phone: { type: 'string', example: '628123456789' },
+              isolir_url: { type: 'string' },
+            },
+          }),
+          429: err('Rate limit'),
+        },
+      },
+    },
+
     '/api/public/lookup': {
       post: {
         tags: ['Publik'],
