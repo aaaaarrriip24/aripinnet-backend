@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layanan Internet Dinonaktifkan</title>
+<!--
+  Halaman walled garden isolir.
+
+  ATURAN UTAMA: TIDAK ADA ASET EKSTERNAL SAMA SEKALI — tidak ada CDN,
+  tidak ada Google Fonts, tidak ada gambar dari luar. Pelanggan yang
+  membuka halaman ini sedang TIDAK punya akses internet; apa pun yang
+  dimuat dari luar jaringan akan gagal dan halaman jadi rusak.
+
+  Satu file, inline CSS, inline JS. Itu syaratnya.
+
+  Pengecualian: gambar QR dari Midtrans (api.sandbox.midtrans.com /
+  api.midtrans.com). Host itu WAJIB dimasukkan ke walled garden di
+  firewall MikroTik, kalau tidak QR-nya tidak akan muncul. Lihat catatan
+  konfigurasi di bagian bawah file ini.
+-->
+<style>
+  *,*::before,*::after{box-sizing:border-box}
+  body{
+    margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:#f4f4f2;color:#22221f;line-height:1.6;
+    display:flex;justify-content:center;padding:20px 16px 40px;
+  }
+  .wrap{width:100%;max-width:440px}
+  .card{background:#fff;border:1px solid #e2e1db;border-radius:12px;padding:20px;margin-bottom:16px}
+  .banner{background:#fdf0ee;border-color:#e8c4bb}
+  h1{font-size:19px;font-weight:600;margin:0 0 6px}
+  h2{font-size:15px;font-weight:600;margin:0 0 12px}
+  p{margin:0 0 10px;font-size:14px}
+  p:last-child{margin-bottom:0}
+  .muted{color:#6b6a64;font-size:13px}
+  label{display:block;font-size:13px;font-weight:500;margin-bottom:6px}
+  input{
+    width:100%;padding:11px 12px;font-size:16px;border:1px solid #d6d5cd;
+    border-radius:8px;background:#fff;color:inherit;font-family:inherit;
+  }
+  input:focus{outline:2px solid #4a7fb5;outline-offset:-1px;border-color:#4a7fb5}
+  button{
+    width:100%;padding:12px;font-size:15px;font-weight:500;font-family:inherit;
+    border:0;border-radius:8px;background:#1f5c8f;color:#fff;cursor:pointer;margin-top:12px;
+  }
+  button:disabled{opacity:.55;cursor:not-allowed}
+  button.ghost{background:#fff;color:#1f5c8f;border:1px solid #c8d5e2}
+  .err{color:#9a2f2f;font-size:13px;margin-top:10px}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #eeede7;font-size:14px}
+  .row:last-of-type{border-bottom:0}
+  .row b{font-weight:600;white-space:nowrap}
+  .total{display:flex;justify-content:space-between;padding-top:12px;margin-top:6px;border-top:2px solid #22221f;font-size:16px;font-weight:600}
+  .qr{text-align:center}
+  .qr img{width:230px;height:230px;border:1px solid #e2e1db;border-radius:8px;background:#fff}
+  .amount{font-size:24px;font-weight:600;margin:10px 0 2px}
+  .pill{display:inline-block;padding:4px 12px;border-radius:999px;font-size:12px;font-weight:500;background:#fdf0ee;color:#9a2f2f}
+  .pill.ok{background:#e8f3e4;color:#2f6b28}
+  .hide{display:none}
+  .spin{display:inline-block;width:12px;height:12px;border:2px solid #e0cfcb;border-top-color:#9a2f2f;border-radius:50%;animation:s .7s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes s{to{transform:rotate(360deg)}}
+  .help{font-size:13px;color:#6b6a64;text-align:center;margin-top:20px}
+  .help a{color:#1f5c8f}
+  .steps{font-size:13px;color:#6b6a64;padding-left:18px;margin:0}
+  .steps li{margin-bottom:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="card banner">
+    <h1>Layanan internet dinonaktifkan sementara</h1>
+    <p class="muted">Ini terjadi karena tagihan Anda belum terbayar. Layanan akan aktif kembali otomatis beberapa menit setelah pembayaran masuk.</p>
+  </div>
+
+  <!-- Langkah 1: cari tagihan -->
+  <div class="card" id="step-lookup">
+    <h2>Cek tagihan Anda</h2>
+    <label for="key">Kode pelanggan atau nomor HP</label>
+    <input id="key" type="text" inputmode="text" autocomplete="off" placeholder="PLG-0001 atau 08123456789">
+    <button id="btn-lookup">Cek tagihan</button>
+    <div class="err hide" id="err-lookup"></div>
+  </div>
+
+  <!-- Langkah 2: daftar tagihan -->
+  <div class="card hide" id="step-bill">
+    <h2 id="bill-name"></h2>
+    <div id="bill-rows"></div>
+    <div class="total"><span>Total tagihan</span><span id="bill-total"></span></div>
+    <p class="muted" id="bill-note" style="margin-top:12px"></p>
+    <button id="btn-pay">Bayar dengan QRIS</button>
+    <button class="ghost" id="btn-back">Ganti nomor</button>
+    <div class="err hide" id="err-pay"></div>
+  </div>
+
+  <!-- Langkah 3: QRIS -->
+  <div class="card hide qr" id="step-qr">
+    <h2>Scan untuk membayar</h2>
+    <img id="qr-img" alt="Kode QRIS pembayaran">
+    <div class="amount" id="qr-amount"></div>
+    <p class="muted">Bisa dibayar dari Gopay, OVO, Dana, ShopeePay, atau m-banking apa pun yang mendukung QRIS.</p>
+    <p><span class="pill" id="qr-status"><span class="spin"></span>Menunggu pembayaran</span></p>
+    <button class="ghost" id="btn-cancel">Kembali</button>
+  </div>
+
+  <!-- Langkah 4: sukses -->
+  <div class="card hide" id="step-done">
+    <h2>Pembayaran diterima</h2>
+    <p><span class="pill ok">Lunas</span></p>
+    <p>Terima kasih. Layanan internet Anda sedang diaktifkan kembali.</p>
+    <p class="muted">Kalau dalam 5 menit internet belum menyala:</p>
+    <ol class="steps">
+      <li>Matikan router/modem Anda, tunggu 10 detik, nyalakan lagi.</li>
+      <li>Kalau masih mati, hubungi admin di bawah.</li>
+    </ol>
+  </div>
+
+  <p class="help">Butuh bantuan? Hubungi <a id="cs-link" href="#">admin</a></p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // Isi saat deploy. Jangan pakai variabel build — halaman ini harus tetap
+  // jalan walau di-copy mentah ke server lain.
+  var API = '/api/public';
+  var CS_PHONE = '628123456789';
+
+  var csLink = document.getElementById('cs-link');
+  csLink.href = 'https://wa.me/' + CS_PHONE;
+  csLink.textContent = '+' + CS_PHONE;
+
+  var pollTimer = null;
+  var state = { invoices: [], orderId: null };
+
+  function $(id) { return document.getElementById(id); }
+  function show(id) { $(id).classList.remove('hide'); }
+  function hide(id) { $(id).classList.add('hide'); }
+  function rupiah(n) { return 'Rp' + Number(n || 0).toLocaleString('id-ID'); }
+
+  function showError(id, msg) {
+    var el = $(id);
+    el.textContent = msg;
+    el.classList.remove('hide');
+  }
+
+  function api(path, method, body) {
+    return fetch(API + path, {
+      method: method || 'GET',
+      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) throw new Error(j.message || 'Terjadi kesalahan, coba lagi');
+        return j;
+      });
+    });
+  }
+
+  /* --- Langkah 1: lookup --- */
+  $('btn-lookup').addEventListener('click', function () {
+    var key = $('key').value.trim();
+    hide('err-lookup');
+
+    if (key.length < 4) {
+      return showError('err-lookup', 'Masukkan kode pelanggan atau nomor HP Anda');
+    }
+
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Mencari...';
+
+    api('/lookup', 'POST', { key: key })
+      .then(function (data) {
+        if (!data.invoices.length) {
+          throw new Error('Tidak ada tagihan tertunggak atas nama ini. Kalau internet Anda masih mati, hubungi admin.');
+        }
+        state.invoices = data.invoices;
+        renderBill(data);
+        hide('step-lookup');
+        show('step-bill');
+      })
+      .catch(function (e) { showError('err-lookup', e.message); })
+      .then(function () {
+        btn.disabled = false;
+        btn.textContent = 'Cek tagihan';
+      });
+  });
+
+  $('key').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') $('btn-lookup').click();
+  });
+
+  function renderBill(data) {
+    $('bill-name').textContent = data.customer.name + ' · ' + data.customer.code;
+
+    var html = '';
+    for (var i = 0; i < data.invoices.length; i++) {
+      var inv = data.invoices[i];
+      html += '<div class="row"><span>' + esc(inv.period) +
+              '<br><span class="muted">' + esc(inv.number) + '</span></span>' +
+              '<b>' + rupiah(inv.total) + '</b></div>';
+    }
+    $('bill-rows').innerHTML = html;
+    $('bill-total').textContent = rupiah(data.total_tagihan);
+
+    // Jelaskan kalau tagihannya lebih dari satu — tombol bayar hanya
+    // memproses yang paling lama. Tanpa penjelasan ini pelanggan akan
+    // mengira sudah lunas semua padahal belum.
+    $('bill-note').textContent = data.invoices.length > 1
+      ? 'Tagihan dibayar satu per satu, dimulai dari yang paling lama (' +
+        data.invoices[0].period + '). Ulangi untuk sisanya.'
+      : '';
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+    });
+  }
+
+  $('btn-back').addEventListener('click', function () {
+    hide('step-bill');
+    show('step-lookup');
+  });
+
+  /* --- Langkah 2: buat QRIS --- */
+  $('btn-pay').addEventListener('click', function () {
+    hide('err-pay');
+    var invoice = state.invoices[0];
+
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = 'Membuat QRIS...';
+
+    api('/invoices/' + invoice.id + '/qris', 'POST')
+      .then(function (data) {
+        if (!data.qr_url) throw new Error('QRIS belum tersedia, coba beberapa saat lagi');
+        state.orderId = data.order_id;
+        $('qr-img').src = data.qr_url;
+        $('qr-amount').textContent = rupiah(data.amount);
+        hide('step-bill');
+        show('step-qr');
+        startPolling();
+      })
+      .catch(function (e) { showError('err-pay', e.message); })
+      .then(function () {
+        btn.disabled = false;
+        btn.textContent = 'Bayar dengan QRIS';
+      });
+  });
+
+  // Kalau gambar QR gagal dimuat, host Midtrans belum masuk walled garden.
+  $('qr-img').addEventListener('error', function () {
+    showError('err-pay', 'Gambar QR gagal dimuat. Hubungi admin — kemungkinan ada konfigurasi jaringan yang perlu diperbaiki.');
+    hide('step-qr');
+    show('step-bill');
+    stopPolling();
+  });
+
+  /* --- Langkah 3: polling status --- */
+  function startPolling() {
+    stopPolling();
+    var tries = 0;
+
+    pollTimer = setInterval(function () {
+      tries++;
+
+      // Berhenti setelah ~30 menit. QRIS-nya sendiri expired dalam 60 menit.
+      if (tries > 360) {
+        stopPolling();
+        $('qr-status').textContent = 'Waktu tunggu habis. Muat ulang halaman untuk mencoba lagi.';
+        return;
+      }
+
+      api('/payments/' + encodeURIComponent(state.orderId) + '/status')
+        .then(function (d) {
+          if (d.status === 'settled') {
+            stopPolling();
+            hide('step-qr');
+            show('step-done');
+          } else if (d.status === 'expired' || d.status === 'failed') {
+            stopPolling();
+            $('qr-status').textContent = 'Transaksi kedaluwarsa. Muat ulang halaman untuk membuat QR baru.';
+          }
+        })
+        .catch(function () {
+          // Jaringan isolir memang rapuh — kegagalan satu polling bukan
+          // alasan menghentikan seluruh proses.
+        });
+    }, 5000);
+  }
+
+  function stopPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+  }
+
+  $('btn-cancel').addEventListener('click', function () {
+    stopPolling();
+    hide('step-qr');
+    show('step-bill');
+  });
+
+  // Hentikan polling kalau halaman disembunyikan — hemat baterai HP pelanggan
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      stopPolling();
+    } else if (state.orderId && !$('step-qr').classList.contains('hide')) {
+      startPolling();
+    }
+  });
+})();
+</script>
+</body>
+</html>
+
+<!--
+==================================================================
+KONFIGURASI WALLED GARDEN DI MIKROTIK
+==================================================================
+Halaman ini tidak akan berfungsi tanpa tiga hal berikut diizinkan
+keluar dari jaringan isolir. Selain ketiganya, semua trafik diblokir.
+
+1. Server billing kamu sendiri (untuk halaman ini + API):
+
+   /ip firewall address-list add list=walled-garden \
+     address=<IP_SERVER_BILLING> comment="server billing"
+
+2. Host Midtrans (untuk gambar QR dan API charge):
+
+   /ip firewall address-list add list=walled-garden \
+     address=api.midtrans.com comment="midtrans"
+   /ip firewall address-list add list=walled-garden \
+     address=api.sandbox.midtrans.com comment="midtrans sandbox"
+
+   RouterOS akan me-resolve nama domain ini secara otomatis dan
+   memperbaruinya berkala. Pastikan /ip dns sudah diset.
+
+3. DNS, kalau tidak pelanggan tidak bisa resolve apa pun:
+
+   /ip firewall filter add chain=forward action=accept \
+     src-address=10.99.99.0/24 protocol=udp dst-port=53 \
+     place-before=0
+
+Aturan filter (urutan penting — accept dulu, baru drop):
+
+   /ip firewall filter add chain=forward action=accept \
+     src-address=10.99.99.0/24 dst-address-list=walled-garden
+   /ip firewall filter add chain=forward action=drop \
+     src-address=10.99.99.0/24
+
+Redirect semua HTTP ke halaman ini:
+
+   /ip firewall nat add chain=dstnat protocol=tcp dst-port=80 \
+     src-address=10.99.99.0/24 dst-address-list=!walled-garden \
+     action=dst-nat to-addresses=<IP_SERVER_BILLING> to-ports=80
+
+CATATAN SOAL HTTPS:
+Browser modern hampir selalu membuka situs lewat HTTPS, dan HTTPS
+TIDAK BISA di-redirect — sertifikatnya tidak cocok dan browser akan
+menampilkan peringatan keamanan, bukan halaman ini. Jangan coba
+mem-bypass itu dengan sertifikat palsu.
+
+Yang bekerja di praktik:
+  - Android/iOS punya captive portal detection yang memakai HTTP polos;
+    halaman ini akan muncul otomatis sebagai notifikasi "Masuk ke jaringan".
+  - Untuk kasus lain, cantumkan alamat halaman ini di pesan WhatsApp isolir,
+    misal http://isolir.namaisp.net — pelanggan tinggal klik.
+
+Karena itu template pesan 'isolir' di templates/messages.js sebaiknya
+ditambahi link tersebut.
+==================================================================
+-->
