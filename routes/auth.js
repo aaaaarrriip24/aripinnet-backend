@@ -15,7 +15,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const router = express.Router();
 
-const { Admin, Customer, Notification } = require('../models');
+const { Admin, Customer, Notification, OtpCode } = require('../models');
 const { signAdmin, signCustomer, requireAdmin, requireCustomer } = require('../middleware/auth');
 
 /* ------------------------------------------------------------------ */
@@ -65,26 +65,19 @@ router.get('/admin/me', requireAdmin, (req, res) => {
 /* ------------------------------------------------------------------ */
 
 /**
- * OTP disimpan di memori, bukan DB.
+ * OTP disimpan di database (koleksi OtpCode), bukan di memori proses.
  *
- * Alasan: OTP hidup 5 menit dan tidak perlu bertahan setelah restart —
- * pelanggan tinggal minta lagi. Menyimpannya di DB hanya menambah koleksi
- * yang harus dibersihkan.
+ * Versi sebelumnya memakai Map in-memory. Akibatnya setiap restart API —
+ * deploy, crash, atau `node --watch` saat pengembangan — membuang semua
+ * kode yang sedang berjalan, dan pelanggan yang baru menerima kodenya
+ * mendapat "Kode sudah kedaluwarsa" tanpa penjelasan apa pun.
  *
- * Konsekuensi: kalau nanti API server jalan di PM2 cluster mode, OTP yang
- * dibuat worker A tidak terlihat worker B. Saat itu terjadi, pindahkan ke
- * Redis atau jalankan API dengan -i 1.
+ * MongoDB menghapus dokumen kedaluwarsa sendiri lewat TTL index, jadi
+ * tidak ada yang perlu dibersihkan manual.
  */
-const otpStore = new Map(); // phone -> { hash, expires, attempts, lastSent }
-
 const OTP_TTL_MS = 5 * 60 * 1000;
 const OTP_COOLDOWN_MS = 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
-
-setInterval(() => {
-  const now = Date.now();
-  for (const [k, v] of otpStore) if (now > v.expires) otpStore.delete(k);
-}, 60_000).unref();
 
 function normalizePhone(input) {
   let n = String(input).replace(/[^0-9]/g, '');
@@ -99,9 +92,11 @@ router.post('/customer/request-otp', async (req, res) => {
     const phone = normalizePhone(req.body.phone);
     if (!phone) return res.status(400).json({ message: 'Nomor HP tidak valid' });
 
-    const existing = otpStore.get(phone);
-    if (existing && Date.now() - existing.lastSent < OTP_COOLDOWN_MS) {
-      const wait = Math.ceil((OTP_COOLDOWN_MS - (Date.now() - existing.lastSent)) / 1000);
+    const existing = await OtpCode.findById(phone).lean();
+    if (existing && Date.now() - new Date(existing.last_sent_at).getTime() < OTP_COOLDOWN_MS) {
+      const wait = Math.ceil(
+        (OTP_COOLDOWN_MS - (Date.now() - new Date(existing.last_sent_at).getTime())) / 1000
+      );
       return res.status(429).json({ message: `Tunggu ${wait} detik sebelum meminta kode lagi` });
     }
 
@@ -116,13 +111,20 @@ router.post('/customer/request-otp', async (req, res) => {
     // crypto.randomInt, bukan Math.random — OTP harus tidak bisa ditebak
     const code = String(crypto.randomInt(100000, 1000000));
 
-    otpStore.set(phone, {
-      hash: await bcrypt.hash(code, 8),
-      expires: Date.now() + OTP_TTL_MS,
-      attempts: 0,
-      lastSent: Date.now(),
-      customerId: String(customer._id),
-    });
+    // upsert — permintaan baru menggantikan kode lama untuk nomor yang sama
+    await OtpCode.findByIdAndUpdate(
+      phone,
+      {
+        $set: {
+          hash: await bcrypt.hash(code, 8),
+          customer_id: customer._id,
+          attempts: 0,
+          last_sent_at: new Date(),
+          expires_at: new Date(Date.now() + OTP_TTL_MS),
+        },
+      },
+      { upsert: true }
+    );
 
     // Lewat outbox, sama seperti notifikasi lain. Worker WhatsApp yang mengirim.
     await Notification.create({
@@ -147,14 +149,20 @@ router.post('/customer/verify-otp', async (req, res) => {
 
     if (!phone || !code) return res.status(400).json({ message: 'Nomor HP dan kode wajib diisi' });
 
-    const entry = otpStore.get(phone);
-    if (!entry || Date.now() > entry.expires) {
+    // Hitung percobaan secara atomik — dua permintaan bersamaan tidak
+    // boleh sama-sama lolos batas.
+    const entry = await OtpCode.findByIdAndUpdate(
+      phone,
+      { $inc: { attempts: 1 } },
+      { new: true }
+    );
+
+    if (!entry || Date.now() > new Date(entry.expires_at).getTime()) {
       return res.status(401).json({ message: 'Kode sudah kedaluwarsa, minta kode baru' });
     }
 
-    entry.attempts++;
     if (entry.attempts > OTP_MAX_ATTEMPTS) {
-      otpStore.delete(phone);
+      await OtpCode.findByIdAndDelete(phone);
       return res.status(429).json({ message: 'Terlalu banyak percobaan, minta kode baru' });
     }
 
@@ -162,9 +170,9 @@ router.post('/customer/verify-otp', async (req, res) => {
       return res.status(401).json({ message: 'Kode salah' });
     }
 
-    otpStore.delete(phone); // sekali pakai
+    await OtpCode.findByIdAndDelete(phone); // sekali pakai
 
-    const customer = await Customer.findById(entry.customerId);
+    const customer = await Customer.findById(entry.customer_id);
     if (!customer || customer.status === 'blacklist') {
       return res.status(401).json({ message: 'Akun tidak aktif' });
     }

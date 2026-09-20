@@ -323,7 +323,42 @@ const counterSchema = new Schema({
 
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* OTP_CODE — kode login pelanggan                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Kode OTP disimpan di database, bukan di memori proses.
+ *
+ * Dulu memakai Map in-memory dengan alasan "OTP cuma hidup 5 menit, tidak
+ * perlu bertahan setelah restart". Itu salah dalam praktik: setiap restart
+ * API — deploy, crash, atau `node --watch` saat pengembangan — membuang
+ * seluruh kode yang sedang berjalan. Pelanggan yang baru saja menerima
+ * kodenya mendapat "Kode sudah kedaluwarsa" padahal kode itu baru sedetik
+ * lalu sampai, dan tidak ada apa pun di layar yang menjelaskan kenapa.
+ *
+ * Sebagai bonus, ini juga menghapus syarat "API harus -i 1": dengan
+ * penyimpanan bersama, kode yang dibuat satu instance bisa diverifikasi
+ * instance lain.
+ *
+ * _id = nomor HP, jadi satu nomor hanya punya satu kode aktif.
+ */
+const otpCodeSchema = new Schema({
+  _id:         { type: String },              // 628xxxx
+  hash:        { type: String, required: true },
+  customer_id: { type: Schema.Types.ObjectId, ref: 'Customer', required: true },
+  attempts:    { type: Number, default: 0 },
+  last_sent_at:{ type: Date, default: Date.now },
+
+  // MongoDB menghapus dokumen ini sendiri saat waktunya lewat, jadi tidak
+  // perlu job pembersih.
+  expires_at:  { type: Date, required: true, index: { expires: 0 } },
+}, { versionKey: false, timestamps: true });
+
+/* ------------------------------------------------------------------ */
+
 module.exports = {
+  OtpCode:      model('OtpCode', otpCodeSchema),
   Admin:        model('Admin', adminSchema),
   Router:       model('Router', routerSchema),
   Plan:         model('Plan', planSchema),
